@@ -277,6 +277,4 @@ mouse: 123,456
 **Email:** [haitch@duck.com](mailto:haitch@duck.com)  
 **Social Media:** [https://oldbytes.space/@haitchfive](https://oldbytes.space/@haitchfive)
 
----
 
-*VDU/Display Server is provided as-is. At this time, patch submissions are not being accepted.*
