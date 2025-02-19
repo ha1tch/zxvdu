@@ -1,9 +1,10 @@
 package main
 
 import (
-	"bufio"
+	"flag"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,20 +14,38 @@ import (
 
 // Global default drawing state.
 var (
-	// Default ink (foreground) and paper (background) are ZX Spectrum values (0–7).
-	// Note: 0 is black, so the bright flag does not affect black.
-	defaultInk   int  = 7 // default to white
-	defaultPaper int  = 0 // default to black
+	defaultInk    int  = 7  // ZX Spectrum default ink (foreground): white.
+	defaultPaper  int  = 0  // ZX Spectrum default paper (background): black.
 	defaultBright bool = false
 )
 
+// Base resolution constants.
+const (
+	BaseWidth  = 256
+	BaseHeight = 192
+)
+
+// Global graphics settings.
+var (
+	graphicsMult int = 1 // Multiplier for the internal buffer resolution (default 1 => 256x192)
+	zoomFactor   int = 1 // Zoom factor for display (default 1: 1:1 mapping)
+)
+
+// Global render target (internal buffer) and its mutex.
+var (
+	renderTarget rl.RenderTexture2D
+	rtMutex      sync.Mutex
+)
+
 // DrawCommand represents a drawing or control instruction.
+// For rect, circle, and triangle commands, Mode indicates stroke ("S") or fill ("F") – default is fill.
 type DrawCommand struct {
-	Cmd    string // "plot", "circle", "line", "lineto", "rect", "cls", "flip", "ink", "paper", "bright", "colour"
-	Params []int  // parameters for drawing/control commands
+	Cmd    string // Supported commands include "plot", "circle", "line", "lineto", "rect", "triangle", "cls", "flip", "ink", "paper", "bright", "colour", "graphics", "zoom"
+	Params []int  // Numeric parameters for commands.
+	Mode   string // Optional mode for geometry commands ("S" for stroke, "F" for fill). Default "F".
 }
 
-// commandChan is used to send commands from network handlers to the main loop.
+// commandChan is used to pass commands from network connections to the main loop.
 var commandChan = make(chan DrawCommand, 100)
 
 // Global slice of active GUI event connections.
@@ -36,39 +55,69 @@ var (
 )
 
 func main() {
-	// Start TCP servers for drawing commands and GUI events.
-	go startDrawingCommandServer(":55555")
-	go startGUIEventsServer(":55556")
+	// Parse command-line flags.
+	inkFlag := flag.Int("ink", -1, "Default ink (foreground) colour (0–7).")
+	paperFlag := flag.Int("paper", -1, "Default paper (background) colour (0–7).")
+	brightFlag := flag.Int("bright", -1, "Default brightness flag (0 or 1).")
+	graphicsFlag := flag.Int("graphics", -1, "Internal resolution multiplier (>=1).")
+	zoomFlag := flag.Int("zoom", -1, "Display zoom factor (>=1).")
+	flag.Parse()
 
-	// Display dimensions.
-	screenWidth := 1024
-	screenHeight := 768
-
-	// Initialize the window.
-	rl.InitWindow(int32(screenWidth), int32(screenHeight), "VDU/Display Server")
-	rl.SetTargetFPS(60)
-
-	// Define the ZX Spectrum palette of 15 colours.
-	// Non-bright colours: indices 0–7; bright variants: indices 8–14.
-	palette := []rl.Color{
-		rl.Black,                        // 0: Black (no bright variant)
-		rl.NewColor(0, 0, 205, 255),       // 1: Blue
-		rl.NewColor(205, 0, 0, 255),       // 2: Red
-		rl.NewColor(205, 0, 205, 255),     // 3: Magenta
-		rl.NewColor(0, 205, 0, 255),       // 4: Green
-		rl.NewColor(0, 205, 205, 255),     // 5: Cyan
-		rl.NewColor(205, 205, 0, 255),     // 6: Yellow
-		rl.NewColor(205, 205, 205, 255),   // 7: White (normal)
-		rl.NewColor(0, 0, 255, 255),       // 8: Bright Blue
-		rl.NewColor(255, 0, 0, 255),       // 9: Bright Red
-		rl.NewColor(255, 0, 255, 255),     // 10: Bright Magenta
-		rl.NewColor(0, 255, 0, 255),       // 11: Bright Green
-		rl.NewColor(0, 255, 255, 255),     // 12: Bright Cyan
-		rl.NewColor(255, 255, 0, 255),     // 13: Bright Yellow
-		rl.NewColor(255, 255, 255, 255),   // 14: Bright White
+	// Set globals if flags were provided.
+	if *inkFlag != -1 {
+		defaultInk = *inkFlag
+	}
+	if *paperFlag != -1 {
+		defaultPaper = *paperFlag
+	}
+	if *brightFlag != -1 {
+		defaultBright = (*brightFlag == 1)
+	}
+	if *graphicsFlag != -1 && *graphicsFlag >= 1 {
+		graphicsMult = *graphicsFlag
+	}
+	if *zoomFlag != -1 && *zoomFlag >= 1 {
+		zoomFactor = *zoomFlag
 	}
 
-	// Create up to 8 buffers for drawing.
+	// Start TCP servers for drawing commands and GUI events.
+	go startDrawingCommandServer(":55550")
+	go startGUIEventsServer(":55551")
+
+	// Initialize the window using the internal resolution scaled by the zoom factor.
+	internalWidth := BaseWidth * graphicsMult
+	internalHeight := BaseHeight * graphicsMult
+	windowWidth := internalWidth * zoomFactor
+	windowHeight := internalHeight * zoomFactor
+
+	rl.InitWindow(int32(windowWidth), int32(windowHeight), "VDU/Display Server")
+	rl.SetTargetFPS(60)
+
+	// Load the initial render texture (internal buffer).
+	rtMutex.Lock()
+	renderTarget = rl.LoadRenderTexture(int32(internalWidth), int32(internalHeight))
+	rtMutex.Unlock()
+
+	// Define the ZX Spectrum palette (15 colours).
+	palette := []rl.Color{
+		rl.Black,                      // 0: Black
+		rl.NewColor(0, 0, 205, 255),     // 1: Blue
+		rl.NewColor(205, 0, 0, 255),     // 2: Red
+		rl.NewColor(205, 0, 205, 255),   // 3: Magenta
+		rl.NewColor(0, 205, 0, 255),     // 4: Green
+		rl.NewColor(0, 205, 205, 255),   // 5: Cyan
+		rl.NewColor(205, 205, 0, 255),   // 6: Yellow
+		rl.NewColor(205, 205, 205, 255), // 7: White (normal)
+		rl.NewColor(0, 0, 255, 255),     // 8: Bright Blue
+		rl.NewColor(255, 0, 0, 255),     // 9: Bright Red
+		rl.NewColor(255, 0, 255, 255),   // 10: Bright Magenta
+		rl.NewColor(0, 255, 0, 255),     // 11: Bright Green
+		rl.NewColor(0, 255, 255, 255),   // 12: Bright Cyan
+		rl.NewColor(255, 255, 0, 255),   // 13: Bright Yellow
+		rl.NewColor(255, 255, 255, 255), // 14: Bright White
+	}
+
+	// Create up to 8 drawing buffers.
 	const numBuffers = 8
 	buffers := make([][]DrawCommand, numBuffers)
 	for i := 0; i < numBuffers; i++ {
@@ -79,79 +128,135 @@ func main() {
 	// Global current position for "lineto" commands.
 	currX, currY := 0, 0
 
-	// Main rendering loop.
+	// Main loop.
 	for !rl.WindowShouldClose() {
-		// Process any new commands from the network.
 		processCommands(&buffers, &activeBuffer, &currX, &currY)
 
-		rl.BeginDrawing()
-		// Clear the screen with Spectrum black.
-		rl.ClearBackground(palette[0])
-
+		// Draw all commands into the render texture (internal buffer).
+		rtMutex.Lock()
+		rl.BeginTextureMode(renderTarget)
+		// Clear with the effective paper colour.
+		rl.ClearBackground(palette[effectivePaperColor()])
 		// Replay drawing commands from the active buffer.
 		for _, cmd := range buffers[activeBuffer] {
 			switch cmd.Cmd {
 			case "plot":
-				// plot x y colorIndex (if -1, use effective ink)
 				if len(cmd.Params) >= 3 {
-					colorIndex := cmd.Params[2]
-					if colorIndex == -1 {
-						colorIndex = effectiveInkColor()
+					cIndex := cmd.Params[2]
+					if cIndex == -1 {
+						cIndex = effectiveInkColor()
 					}
-					if colorIndex < len(palette) {
-						rl.DrawPixel(int32(cmd.Params[0]), int32(cmd.Params[1]), palette[colorIndex])
+					if cIndex < len(palette) {
+						rl.DrawPixel(int32(cmd.Params[0]), int32(cmd.Params[1]), palette[cIndex])
 					}
 				}
 			case "circle":
-				// circle x y radius colorIndex (if -1, use effective ink)
-				if len(cmd.Params) >= 4 {
-					colorIndex := cmd.Params[3]
-					if colorIndex == -1 {
-						colorIndex = effectiveInkColor()
+				if len(cmd.Params) >= 3 {
+					cIndex := -1
+					if len(cmd.Params) >= 4 {
+						cIndex = cmd.Params[3]
 					}
-					if colorIndex < len(palette) {
-						rl.DrawCircle(int32(cmd.Params[0]), int32(cmd.Params[1]), float32(cmd.Params[2]), palette[colorIndex])
+					if cIndex == -1 {
+						cIndex = effectiveInkColor()
+					}
+					if cIndex < len(palette) {
+						if strings.ToUpper(cmd.Mode) == "S" {
+							rl.DrawCircleLines(int32(cmd.Params[0]), int32(cmd.Params[1]), float32(cmd.Params[2]), palette[cIndex])
+						} else {
+							rl.DrawCircle(int32(cmd.Params[0]), int32(cmd.Params[1]), float32(cmd.Params[2]), palette[cIndex])
+						}
 					}
 				}
 			case "line":
-				// line x1 y1 x2 y2 colorIndex (if -1, use effective ink)
-				if len(cmd.Params) >= 5 {
-					colorIndex := cmd.Params[4]
-					if colorIndex == -1 {
-						colorIndex = effectiveInkColor()
+				if len(cmd.Params) >= 4 {
+					cIndex := -1
+					if len(cmd.Params) >= 5 {
+						cIndex = cmd.Params[4]
 					}
-					if colorIndex < len(palette) {
+					if cIndex == -1 {
+						cIndex = effectiveInkColor()
+					}
+					if cIndex < len(palette) {
 						rl.DrawLine(int32(cmd.Params[0]), int32(cmd.Params[1]),
-							int32(cmd.Params[2]), int32(cmd.Params[3]), palette[colorIndex])
+							int32(cmd.Params[2]), int32(cmd.Params[3]), palette[cIndex])
 					}
 				}
 			case "lineto":
-				// lineto x y colorIndex (if -1, use effective ink); uses the global current position.
-				if len(cmd.Params) >= 3 {
-					colorIndex := cmd.Params[2]
-					if colorIndex == -1 {
-						colorIndex = effectiveInkColor()
+				if len(cmd.Params) >= 2 {
+					cIndex := -1
+					if len(cmd.Params) >= 3 {
+						cIndex = cmd.Params[2]
 					}
-					if colorIndex < len(palette) {
+					if cIndex == -1 {
+						cIndex = effectiveInkColor()
+					}
+					if cIndex < len(palette) {
 						rl.DrawLine(int32(currX), int32(currY),
-							int32(cmd.Params[0]), int32(cmd.Params[1]), palette[colorIndex])
+							int32(cmd.Params[0]), int32(cmd.Params[1]), palette[cIndex])
 						currX, currY = cmd.Params[0], cmd.Params[1]
 					}
 				}
 			case "rect":
-				// rect x y width height colorIndex (if -1, use effective paper)
-				if len(cmd.Params) >= 5 {
-					colorIndex := cmd.Params[4]
-					if colorIndex == -1 {
-						colorIndex = effectivePaperColor()
+				if len(cmd.Params) >= 4 {
+					cIndex := -1
+					if len(cmd.Params) >= 5 {
+						cIndex = cmd.Params[4]
 					}
-					if colorIndex < len(palette) {
-						rl.DrawRectangle(int32(cmd.Params[0]), int32(cmd.Params[1]),
-							int32(cmd.Params[2]), int32(cmd.Params[3]), palette[colorIndex])
+					if cIndex == -1 {
+						cIndex = effectiveInkColor()
+					}
+					if cIndex < len(palette) {
+						if strings.ToUpper(cmd.Mode) == "S" {
+							rl.DrawRectangleLines(int32(cmd.Params[0]), int32(cmd.Params[1]),
+								int32(cmd.Params[2]), int32(cmd.Params[3]), palette[cIndex])
+						} else {
+							rl.DrawRectangle(int32(cmd.Params[0]), int32(cmd.Params[1]),
+								int32(cmd.Params[2]), int32(cmd.Params[3]), palette[cIndex])
+						}
+					}
+				}
+			case "triangle":
+				if len(cmd.Params) >= 6 {
+					cIndex := -1
+					if len(cmd.Params) >= 7 {
+						cIndex = cmd.Params[6]
+					}
+					if cIndex == -1 {
+						cIndex = effectiveInkColor()
+					}
+					if cIndex < len(palette) {
+						p1 := rl.Vector2{X: float32(cmd.Params[0]), Y: float32(cmd.Params[1])}
+						p2 := rl.Vector2{X: float32(cmd.Params[2]), Y: float32(cmd.Params[3])}
+						p3 := rl.Vector2{X: float32(cmd.Params[4]), Y: float32(cmd.Params[5])}
+						if strings.ToUpper(cmd.Mode) == "S" {
+							rl.DrawLineV(p1, p2, palette[cIndex])
+							rl.DrawLineV(p2, p3, palette[cIndex])
+							rl.DrawLineV(p3, p1, palette[cIndex])
+						} else {
+							rl.DrawTriangle(p1, p2, p3, palette[cIndex])
+						}
 					}
 				}
 			}
 		}
+		rl.EndTextureMode()
+		rtMutex.Unlock()
+
+		// Draw the render texture to the window scaled by the zoom factor.
+		rl.BeginDrawing()
+		rl.ClearBackground(rl.Black)
+		// Compute destination rectangle based on internal resolution and zoom factor.
+		internalWidth = BaseWidth * graphicsMult
+		internalHeight = BaseHeight * graphicsMult
+		destRect := rl.Rectangle{
+			X:      0,
+			Y:      0,
+			Width:  float32(internalWidth * zoomFactor),
+			Height: float32(internalHeight * zoomFactor),
+		}
+		// Source rectangle: flip vertically.
+		srcRect := rl.Rectangle{X: 0, Y: 0, Width: float32(internalWidth), Height: -float32(internalHeight)}
+		rl.DrawTexturePro(renderTarget.Texture, srcRect, destRect, rl.Vector2{}, 0, rl.White)
 
 		// Example: broadcast a GUI event on left mouse click.
 		if rl.IsMouseButtonPressed(rl.MouseLeftButton) {
@@ -159,18 +264,17 @@ func main() {
 			eventStr := fmt.Sprintf("mouse: %d,%d", int(mousePos.X), int(mousePos.Y))
 			sendGUIEvent(eventStr)
 		}
-
 		rl.EndDrawing()
 	}
 
+	rl.UnloadRenderTexture(renderTarget)
 	rl.CloseWindow()
 }
 
-// effectiveInkColor returns the computed ink (foreground) color index
-// based on the defaultInk and defaultBright flag.
+// effectiveInkColor computes the actual ink colour index (taking brightness into account).
 func effectiveInkColor() int {
 	if defaultInk == 0 {
-		return 0 // black is always black
+		return 0
 	}
 	if defaultBright {
 		return defaultInk + 7
@@ -178,8 +282,7 @@ func effectiveInkColor() int {
 	return defaultInk
 }
 
-// effectivePaperColor returns the computed paper (background) color index
-// based on the defaultPaper and defaultBright flag.
+// effectivePaperColor computes the paper colour index (taking brightness into account).
 func effectivePaperColor() int {
 	if defaultPaper == 0 {
 		return 0
@@ -190,54 +293,76 @@ func effectivePaperColor() int {
 	return defaultPaper
 }
 
-// processCommands reads pending commands from commandChan and updates the buffers
-// or global drawing state as needed.
+// processCommands reads commands from commandChan and updates buffers, graphics, or drawing state.
 func processCommands(buffers *[][]DrawCommand, activeBuffer *int, currX, currY *int) {
 	for {
 		select {
 		case cmd := <-commandChan:
 			switch cmd.Cmd {
 			case "cls":
-				// Clear the active buffer.
 				(*buffers)[*activeBuffer] = []DrawCommand{}
 			case "flip":
 				if len(cmd.Params) == 0 {
-					// Toggle between buffers 0 and 1.
 					if *activeBuffer == 0 {
 						*activeBuffer = 1
 					} else {
 						*activeBuffer = 0
 					}
 				} else if len(cmd.Params) == 1 {
-					// Select the specified buffer if valid (0–7).
 					if cmd.Params[0] >= 0 && cmd.Params[0] < len(*buffers) {
 						*activeBuffer = cmd.Params[0]
 					}
 				}
 			case "ink":
-				// Set default ink colour.
 				if len(cmd.Params) == 1 {
 					defaultInk = cmd.Params[0]
 				}
 			case "paper":
-				// Set default paper colour.
 				if len(cmd.Params) == 1 {
 					defaultPaper = cmd.Params[0]
 				}
 			case "bright":
-				// Set brightness flag.
 				if len(cmd.Params) == 1 {
 					defaultBright = (cmd.Params[0] == 1)
 				}
 			case "colour":
-				// Set ink, paper, and bright all at once.
 				if len(cmd.Params) == 3 {
 					defaultInk = cmd.Params[0]
 					defaultPaper = cmd.Params[1]
 					defaultBright = (cmd.Params[2] == 1)
 				}
+			case "graphics":
+				if len(cmd.Params) == 1 && cmd.Params[0] >= 1 {
+					graphicsMult = cmd.Params[0]
+					// Reset all buffers.
+					for i := range *buffers {
+						(*buffers)[i] = []DrawCommand{}
+					}
+					*activeBuffer = 0
+					// Update internal resolution and recreate render texture.
+					internalW := BaseWidth * graphicsMult
+					internalH := BaseHeight * graphicsMult
+					rtMutex.Lock()
+					rl.UnloadRenderTexture(renderTarget)
+					renderTarget = rl.LoadRenderTexture(int32(internalW), int32(internalH))
+					rtMutex.Unlock()
+					// Adjust window size based on zoom factor.
+					rl.SetWindowSize(int32(internalW*zoomFactor), int32(internalH*zoomFactor))
+				}
+			case "zoom":
+				// Update zoom factor without clearing buffers.
+				if len(cmd.Params) == 1 && cmd.Params[0] >= 1 {
+					newZoom := cmd.Params[0]
+					internalW := BaseWidth * graphicsMult
+					internalH := BaseHeight * graphicsMult
+					monW := rl.GetMonitorWidth(0)
+					monH := rl.GetMonitorHeight(0)
+					if internalW*newZoom <= monW && internalH*newZoom <= monH {
+						zoomFactor = newZoom
+						rl.SetWindowSize(int32(internalW*zoomFactor), int32(internalH*zoomFactor))
+					}
+				}
 			default:
-				// For drawing commands, append to the current active buffer.
 				(*buffers)[*activeBuffer] = append((*buffers)[*activeBuffer], cmd)
 			}
 		default:
@@ -246,7 +371,7 @@ func processCommands(buffers *[][]DrawCommand, activeBuffer *int, currX, currY *
 	}
 }
 
-// startDrawingCommandServer listens on the given address for drawing commands.
+// startDrawingCommandServer listens on a TCP port for drawing commands.
 func startDrawingCommandServer(addr string) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -255,7 +380,6 @@ func startDrawingCommandServer(addr string) {
 	}
 	defer ln.Close()
 	fmt.Println("Drawing command server listening on", addr)
-
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -266,7 +390,7 @@ func startDrawingCommandServer(addr string) {
 	}
 }
 
-// handleDrawingCommandConn reads commands from a drawing command connection.
+// handleDrawingCommandConn reads commands from a TCP connection.
 func handleDrawingCommandConn(conn net.Conn) {
 	defer conn.Close()
 	scanner := bufio.NewScanner(conn)
@@ -285,131 +409,112 @@ func handleDrawingCommandConn(conn net.Conn) {
 }
 
 // parseCommand converts a text line into a DrawCommand.
-// Supported commands:
-//
-//   Drawing commands:
-//     - plot x y [colorIndex]        (if colorIndex is omitted or -1, uses default ink)
-//     - circle x y radius [colorIndex] (if colorIndex is omitted or -1, uses default ink)
-//     - line x1 y1 x2 y2 [colorIndex]  (if colorIndex is omitted or -1, uses default ink)
-//     - lineto x y [colorIndex]        (if colorIndex is omitted or -1, uses default ink)
-//     - rect x y width height [colorIndex] (if colorIndex is omitted or -1, uses default paper)
-//
-//   Control commands:
-//     - cls                        (clears current active buffer)
-//     - flip [bufferIndex]         (toggles or selects a buffer, 0–7)
-//     - ink color                  (set default ink 0–7)
-//     - paper color                (set default paper 0–7)
-//     - bright 0|1                 (set brightness flag)
-//     - colour ink paper bright    (set all three in one command)
+// It accepts "_" as a placeholder (converted to -1) for numeric parameters.
+// For rect, circle, triangle commands, an optional mode token ("S" or "F") may appear as the last token.
+// The "graphics" and "zoom" commands expect one numeric parameter.
 func parseCommand(line string) (DrawCommand, error) {
 	fields := strings.Fields(line)
 	if len(fields) == 0 {
 		return DrawCommand{}, fmt.Errorf("empty command")
 	}
 	cmd := strings.ToLower(fields[0])
-	var params []int
-	for _, field := range fields[1:] {
-		val, err := strconv.Atoi(field)
-		if err != nil {
-			return DrawCommand{}, fmt.Errorf("invalid parameter %q", field)
+	var dc DrawCommand
+	dc.Cmd = cmd
+	dc.Mode = "F" // default mode is fill
+
+	// Helper: if token is "_" then return -1; otherwise convert to int.
+	convertToken := func(token string) (int, error) {
+		if token == "_" {
+			return -1, nil
 		}
-		params = append(params, val)
+		return strconv.Atoi(token)
 	}
 
 	switch cmd {
-	case "plot":
-		// Accepts 2 or 3 parameters; if 2 provided, use -1 for color.
-		if len(params) == 2 {
-			params = append(params, -1)
+	case "plot", "line", "lineto", "ink", "paper", "bright", "colour", "cls", "flip":
+		params := []int{}
+		for _, token := range fields[1:] {
+			val, err := convertToken(token)
+			if err != nil {
+				return DrawCommand{}, fmt.Errorf("invalid parameter %q", token)
+			}
+			params = append(params, val)
 		}
-		if len(params) != 3 {
-			return DrawCommand{}, fmt.Errorf("plot requires 2 or 3 parameters: x y [colorIndex]")
+		dc.Params = params
+	case "rect", "circle", "triangle":
+		params := []int{}
+		tokenCount := len(fields) - 1
+		if tokenCount > 0 {
+			if _, err := strconv.Atoi(fields[len(fields)-1]); err != nil {
+				modeCandidate := strings.ToUpper(fields[len(fields)-1])
+				if modeCandidate != "S" && modeCandidate != "F" {
+					return DrawCommand{}, fmt.Errorf("%s mode must be S or F", cmd)
+				}
+				dc.Mode = modeCandidate
+				tokenCount--
+			}
 		}
-	case "circle":
-		// Accepts 3 or 4 parameters.
-		if len(params) == 3 {
-			params = append(params, -1)
+		for i := 1; i <= tokenCount; i++ {
+			val, err := convertToken(fields[i])
+			if err != nil {
+				return DrawCommand{}, fmt.Errorf("invalid parameter %q", fields[i])
+			}
+			params = append(params, val)
 		}
-		if len(params) != 4 {
-			return DrawCommand{}, fmt.Errorf("circle requires 3 or 4 parameters: x y radius [colorIndex]")
+		switch cmd {
+		case "rect":
+			if len(params) == 4 {
+				params = append(params, -1)
+			} else if len(params) != 5 {
+				return DrawCommand{}, fmt.Errorf("rect requires 4 or 5 numeric parameters, plus optional mode")
+			}
+		case "circle":
+			if len(params) == 3 {
+				params = append(params, -1)
+			} else if len(params) != 4 {
+				return DrawCommand{}, fmt.Errorf("circle requires 3 or 4 numeric parameters, plus optional mode")
+			}
+		case "triangle":
+			if len(params) == 6 {
+				params = append(params, -1)
+			} else if len(params) != 7 {
+				return DrawCommand{}, fmt.Errorf("triangle requires 6 or 7 numeric parameters, plus optional mode")
+			}
 		}
-	case "line":
-		// Accepts 4 or 5 parameters.
-		if len(params) == 4 {
-			params = append(params, -1)
+		dc.Params = params
+	case "graphics":
+		params := []int{}
+		for _, token := range fields[1:] {
+			val, err := convertToken(token)
+			if err != nil {
+				return DrawCommand{}, fmt.Errorf("invalid parameter %q", token)
+			}
+			params = append(params, val)
 		}
-		if len(params) != 5 {
-			return DrawCommand{}, fmt.Errorf("line requires 4 or 5 parameters: x1 y1 x2 y2 [colorIndex]")
-		}
-	case "lineto":
-		// Accepts 2 or 3 parameters.
-		if len(params) == 2 {
-			params = append(params, -1)
-		}
-		if len(params) != 3 {
-			return DrawCommand{}, fmt.Errorf("lineto requires 2 or 3 parameters: x y [colorIndex]")
-		}
-	case "rect":
-		// Accepts 4 or 5 parameters.
-		if len(params) == 4 {
-			params = append(params, -1)
-		}
-		if len(params) != 5 {
-			return DrawCommand{}, fmt.Errorf("rect requires 4 or 5 parameters: x y width height [colorIndex]")
-		}
-	case "cls", "flip":
-		// "cls" takes no parameters; "flip" takes 0 or 1.
-		if cmd == "cls" && len(params) != 0 {
-			return DrawCommand{}, fmt.Errorf("cls takes no parameters")
-		}
-		if cmd == "flip" && len(params) > 1 {
-			return DrawCommand{}, fmt.Errorf("flip takes 0 or 1 parameter (buffer index)")
-		}
-	case "ink":
-		// Expect exactly 1 parameter (0–7).
 		if len(params) != 1 {
-			return DrawCommand{}, fmt.Errorf("ink requires 1 parameter (0–7)")
+			return DrawCommand{}, fmt.Errorf("graphics requires exactly 1 numeric parameter: multiplier")
 		}
-		if params[0] < 0 || params[0] > 7 {
-			return DrawCommand{}, fmt.Errorf("ink parameter must be between 0 and 7")
+		dc.Params = params
+	case "zoom":
+		params := []int{}
+		for _, token := range fields[1:] {
+			val, err := convertToken(token)
+			if err != nil {
+				return DrawCommand{}, fmt.Errorf("invalid parameter %q", token)
+			}
+			params = append(params, val)
 		}
-	case "paper":
-		// Expect exactly 1 parameter (0–7).
 		if len(params) != 1 {
-			return DrawCommand{}, fmt.Errorf("paper requires 1 parameter (0–7)")
+			return DrawCommand{}, fmt.Errorf("zoom requires exactly 1 numeric parameter: zoom factor")
 		}
-		if params[0] < 0 || params[0] > 7 {
-			return DrawCommand{}, fmt.Errorf("paper parameter must be between 0 and 7")
-		}
-	case "bright":
-		// Expect exactly 1 parameter (0 or 1).
-		if len(params) != 1 {
-			return DrawCommand{}, fmt.Errorf("bright requires 1 parameter (0 or 1)")
-		}
-		if params[0] != 0 && params[0] != 1 {
-			return DrawCommand{}, fmt.Errorf("bright parameter must be 0 or 1")
-		}
-	case "colour":
-		// Expect exactly 3 parameters: ink (0–7), paper (0–7), bright (0 or 1).
-		if len(params) != 3 {
-			return DrawCommand{}, fmt.Errorf("colour requires 3 parameters: ink paper bright")
-		}
-		if params[0] < 0 || params[0] > 7 {
-			return DrawCommand{}, fmt.Errorf("colour: ink must be between 0 and 7")
-		}
-		if params[1] < 0 || params[1] > 7 {
-			return DrawCommand{}, fmt.Errorf("colour: paper must be between 0 and 7")
-		}
-		if params[2] != 0 && params[2] != 1 {
-			return DrawCommand{}, fmt.Errorf("colour: bright must be 0 or 1")
-		}
+		dc.Params = params
 	default:
 		return DrawCommand{}, fmt.Errorf("unknown command %q", cmd)
 	}
-	return DrawCommand{Cmd: cmd, Params: params}, nil
+	return dc, nil
 }
 
-// startGUIEventsServer listens on the provided address for GUI event clients.
+// startGUIEventsServer listens for GUI event connections on a TCP port.
 func startGUIEventsServer(addr string) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -418,7 +523,6 @@ func startGUIEventsServer(addr string) {
 	}
 	defer ln.Close()
 	fmt.Println("GUI events server listening on", addr)
-
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -432,14 +536,13 @@ func startGUIEventsServer(addr string) {
 	}
 }
 
-// sendGUIEvent broadcasts a GUI event string to all connected GUI event clients.
+// sendGUIEvent broadcasts a GUI event string to all connected clients.
 func sendGUIEvent(event string) {
 	guiEventConnsMu.Lock()
 	defer guiEventConnsMu.Unlock()
 	for i := 0; i < len(guiEventConns); i++ {
 		_, err := fmt.Fprintln(guiEventConns[i], event)
 		if err != nil {
-			// On error, close and remove the connection.
 			guiEventConns[i].Close()
 			guiEventConns = append(guiEventConns[:i], guiEventConns[i+1:]...)
 			i--
