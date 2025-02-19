@@ -1,6 +1,6 @@
-# VDU/Display Server
+# zxvdu - a simple VDU / display server
 
-A simple VDU (display) server built in Go using the [raylib-go](https://github.com/gen2brain/raylib-go) library. This project simulates a classic ZX Spectrum–style display with a 15‑colour palette and provides a network interface for remote drawing commands. It is designed to work with slow remote clients (such as a ZX Spectrum sending serial commands over WiFi) by buffering and scaling the output appropriately.
+A simple VDU (display) server built in Go using the [raylib-go](https://github.com/gen2brain/raylib-go) library. This project simulates a classic ZX Spectrum–style display with a 15‑colour palette and provides a network interface for remote drawing commands. It is designed to work with slow remote clients (such as a ZX Spectrum sending serial commands) by buffering and scaling the output appropriately.
 
 ---
 
