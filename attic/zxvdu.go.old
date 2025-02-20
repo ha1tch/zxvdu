@@ -1,10 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,7 +40,7 @@ var (
 // DrawCommand represents a drawing or control instruction.
 // For rect, circle, and triangle commands, Mode indicates stroke ("S") or fill ("F") – default is fill.
 type DrawCommand struct {
-	Cmd    string // Supported commands include "plot", "circle", "line", "lineto", "rect", "triangle", "cls", "flip", "ink", "paper", "bright", "colour", "graphics", "zoom"
+	Cmd    string // Supported commands: plot, circle, line, lineto, rect, triangle, cls, flip, ink, paper, bright, colour, graphics, zoom
 	Params []int  // Numeric parameters for commands.
 	Mode   string // Optional mode for geometry commands ("S" for stroke, "F" for fill). Default "F".
 }
@@ -90,7 +90,7 @@ func main() {
 	windowWidth := internalWidth * zoomFactor
 	windowHeight := internalHeight * zoomFactor
 
-	rl.InitWindow(int32(windowWidth), int32(windowHeight), "VDU/Display Server")
+	rl.InitWindow(int32(windowWidth), int32(windowHeight), "zxvdu - a simple VDU / display server")
 	rl.SetTargetFPS(60)
 
 	// Load the initial render texture (internal buffer).
@@ -245,7 +245,6 @@ func main() {
 		// Draw the render texture to the window scaled by the zoom factor.
 		rl.BeginDrawing()
 		rl.ClearBackground(rl.Black)
-		// Compute destination rectangle based on internal resolution and zoom factor.
 		internalWidth = BaseWidth * graphicsMult
 		internalHeight = BaseHeight * graphicsMult
 		destRect := rl.Rectangle{
@@ -254,11 +253,9 @@ func main() {
 			Width:  float32(internalWidth * zoomFactor),
 			Height: float32(internalHeight * zoomFactor),
 		}
-		// Source rectangle: flip vertically.
 		srcRect := rl.Rectangle{X: 0, Y: 0, Width: float32(internalWidth), Height: -float32(internalHeight)}
 		rl.DrawTexturePro(renderTarget.Texture, srcRect, destRect, rl.Vector2{}, 0, rl.White)
 
-		// Example: broadcast a GUI event on left mouse click.
 		if rl.IsMouseButtonPressed(rl.MouseLeftButton) {
 			mousePos := rl.GetMousePosition()
 			eventStr := fmt.Sprintf("mouse: %d,%d", int(mousePos.X), int(mousePos.Y))
@@ -339,18 +336,15 @@ func processCommands(buffers *[][]DrawCommand, activeBuffer *int, currX, currY *
 						(*buffers)[i] = []DrawCommand{}
 					}
 					*activeBuffer = 0
-					// Update internal resolution and recreate render texture.
 					internalW := BaseWidth * graphicsMult
 					internalH := BaseHeight * graphicsMult
 					rtMutex.Lock()
 					rl.UnloadRenderTexture(renderTarget)
 					renderTarget = rl.LoadRenderTexture(int32(internalW), int32(internalH))
 					rtMutex.Unlock()
-					// Adjust window size based on zoom factor.
-					rl.SetWindowSize(int32(internalW*zoomFactor), int32(internalH*zoomFactor))
+					rl.SetWindowSize(internalW*zoomFactor, internalH*zoomFactor)
 				}
 			case "zoom":
-				// Update zoom factor without clearing buffers.
 				if len(cmd.Params) == 1 && cmd.Params[0] >= 1 {
 					newZoom := cmd.Params[0]
 					internalW := BaseWidth * graphicsMult
@@ -359,7 +353,7 @@ func processCommands(buffers *[][]DrawCommand, activeBuffer *int, currX, currY *
 					monH := rl.GetMonitorHeight(0)
 					if internalW*newZoom <= monW && internalH*newZoom <= monH {
 						zoomFactor = newZoom
-						rl.SetWindowSize(int32(internalW*zoomFactor), int32(internalH*zoomFactor))
+						rl.SetWindowSize(internalW*zoomFactor, internalH*zoomFactor)
 					}
 				}
 			default:
@@ -410,7 +404,7 @@ func handleDrawingCommandConn(conn net.Conn) {
 
 // parseCommand converts a text line into a DrawCommand.
 // It accepts "_" as a placeholder (converted to -1) for numeric parameters.
-// For rect, circle, triangle commands, an optional mode token ("S" or "F") may appear as the last token.
+// For rect, circle, and triangle commands, an optional mode token ("S" or "F") may appear as the last token.
 // The "graphics" and "zoom" commands expect one numeric parameter.
 func parseCommand(line string) (DrawCommand, error) {
 	fields := strings.Fields(line)

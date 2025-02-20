@@ -1,7 +1,3 @@
-Below is the complete updated README:
-
----
-
 # zxvdu - a simple VDU / display server
 
 A simple VDU (display) server built in Go using the [raylib-go](https://github.com/gen2brain/raylib-go) library. This project simulates a classic ZX Spectrum–style display with a 15‑colour palette and provides a network interface for remote drawing commands. It is designed to work with slow remote clients (such as a ZX Spectrum sending serial commands) by buffering and scaling the output appropriately.
@@ -337,6 +333,3 @@ This sets the default ink colour to 3, paper to 0, brightness on, internal resol
 **Email:** [haitch@duck.com](mailto:haitch@duck.com)  
 **Social Media:** [https://oldbytes.space/@haitchfive](https://oldbytes.space/@haitchfive)
 
----
-
-This README now reflects the improved parameter handling, corrected examples, and additional interesting cases. Let me know if you have any further suggestions or adjustments!
