@@ -1,3 +1,7 @@
+Below is the complete updated README:
+
+---
+
 # zxvdu - a simple VDU / display server
 
 A simple VDU (display) server built in Go using the [raylib-go](https://github.com/gen2brain/raylib-go) library. This project simulates a classic ZX Spectrum–style display with a 15‑colour palette and provides a network interface for remote drawing commands. It is designed to work with slow remote clients (such as a ZX Spectrum sending serial commands) by buffering and scaling the output appropriately.
@@ -8,23 +12,32 @@ A simple VDU (display) server built in Go using the [raylib-go](https://github.c
 
 - **Drawing Primitives:**  
   Supports a variety of commands to render:
-  - **Pixel:** `plot x y [colorIndex]`
-  - **Line:** `line x1 y1 x2 y2 [colorIndex]` and `lineto x y [colorIndex]`
-  - **Circle:** `circle x y radius [colorIndex] [mode]`  
+  - **Pixel:**  
+    `plot x y [colorIndex]`
+  - **Line:**  
+    `line x1 y1 x2 y2 [colorIndex]` and `lineto x y [colorIndex]`
+  - **Circle:**  
+    `circle x y radius [colorIndex] [mode]`  
     _Mode:_ `"F"` (fill, default) or `"S"` (stroke)
-  - **Rectangle:** `rect x y width height [colorIndex] [mode]`  
+  - **Rectangle:**  
+    `rect x y width height [colorIndex] [mode]`  
     _Mode:_ `"F"` (fill, default) or `"S"` (stroke)
-  - **Triangle:** `triangle x1 y1 x2 y2 x3 y3 [colorIndex] [mode]`  
+  - **Triangle:**  
+    `triangle x1 y1 x2 y2 x3 y3 [colorIndex] [mode]`  
     _Mode:_ `"F"` (fill, default) or `"S"` (stroke)
 
 - **Colour Management:**  
   Set the drawing state with:
-  - **ink:** `ink color` – Sets the default ink (foreground) colour (0–7).  
-  - **paper:** `paper color` – Sets the default paper (background) colour (0–7).  
-  - **bright:** `bright 0|1` – Sets the brightness flag (0 for off, 1 for on).  
-  - **colour:** `colour ink paper bright` – Sets ink, paper, and brightness all at once.
+  - **ink:**  
+    `ink color` – Sets the default ink (foreground) colour (0–7).
+  - **paper:**  
+    `paper color` – Sets the default paper (background) colour (0–7).
+  - **bright:**  
+    `bright 0|1` – Sets the brightness flag (0 for off, 1 for on).
+  - **colour:**  
+    `colour ink paper bright` – Sets ink, paper, and brightness all at once.
 
-  For drawing primitives, if the color parameter is omitted or specified as an underscore (`_`), the server uses the effective default ink colour (or paper colour for background operations).
+  For drawing primitives, if the color parameter is omitted (or specified as an underscore `_` to skip it when providing a later parameter), the server uses the effective default ink colour (or paper colour for background operations).
 
 - **Buffer Management:**  
   Manage drawing buffers with:
@@ -74,8 +87,8 @@ A simple VDU (display) server built in Go using the [raylib-go](https://github.c
 1. **Clone the repository:**
 
    ```bash
-   git clone https://github.com/yourusername/vdu-display-server.git
-   cd vdu-display-server
+   git clone https://github.com/ha1tch/zxvdu.git
+   cd zxvdu
    ```
 
 2. **Install dependencies:**
@@ -89,19 +102,19 @@ A simple VDU (display) server built in Go using the [raylib-go](https://github.c
 3. **Build the project:**
 
    ```bash
-   go build -o vdu-display-server
+   go build -o zxvdu
    ```
 
 4. **Run the server:**
 
    ```bash
-   ./vdu-display-server
+   ./zxvdu
    ```
 
    You can also supply command‑line flags to set initial values:
 
    ```bash
-   ./vdu-display-server -ink=3 -paper=0 -bright=1 -graphics=2 -zoom=2
+   ./zxvdu -ink=3 -paper=0 -bright=1 -graphics=2 -zoom=2
    ```
 
    This example sets the default ink colour to 3, paper to 0, brightness on, internal resolution to 512×384 (2× multiplier), and a zoom factor of 2 (resulting in a window size of 1024×768).
@@ -116,127 +129,154 @@ Commands are sent as single lines of text (terminated by a newline) with space�
 
 #### Drawing Commands
 
-- **Plot a Pixel:**
-
-  ```bash
-  plot 50 50 _
-  ```
-
-- **Draw a Line:**
-
-  ```bash
-  line 10 10 100 100 _
-  ```
-
-- **Draw a Circle:**
-
-  - Filled (default):
-
+- **Plot a Pixel:**  
+  Use an explicit color, or omit it to use the default ink.
+  - Explicit:  
     ```bash
-    circle 200 200 50 _
+    plot 50 50 2
+    ```  
+    (Draws a pixel at (50,50) using color index 2.)  
+  - Omitted (defaults to effective ink):  
+    ```bash
+    plot 50 50
     ```
 
-  - Stroked:
-
+- **Draw a Line:**  
+  You can either specify the color or leave it out.
+  - Explicit:  
     ```bash
-    circle 200 200 50 _ S
+    line 10 10 100 100 3
+    ```  
+    (Draws a line from (10,10) to (100,100) using color index 3.)  
+  - Omitted:  
+    ```bash
+    line 10 10 100 100
+    ```  
+    (Uses the default ink.)
+
+- **Draw a Circle:**  
+  Since the circle command accepts an optional color and an optional mode, you can provide:
+  - With both color and mode specified:  
+    ```bash
+    circle 200 200 50 4 S
+    ```  
+    (Draws a stroked circle centered at (200,200) with radius 50 using color index 4.)  
+  - With only color specified (mode defaults to fill):  
+    ```bash
+    circle 200 200 50 4
+    ```  
+    (Draws a filled circle with color index 4.)  
+  - With both parameters omitted (using default ink and fill mode):  
+    ```bash
+    circle 200 200 50
     ```
 
-- **Draw a Rectangle:**
-
-  - Filled:
-
+- **Draw a Rectangle:**  
+  Similar to circle, you can control color and mode:
+  - Filled rectangle with explicit color:  
     ```bash
-    rect 300 300 150 100 _
-    ```
-
-  - Stroked:
-
+    rect 300 300 150 100 5
+    ```  
+    (Draws a filled rectangle at (300,300) of size 150×100 using color index 5.)  
+  - Stroked rectangle with default ink:  
     ```bash
     rect 300 300 150 100 _ S
-    ```
-
-- **Draw a Triangle:**
-
-  - Filled:
-
+    ```  
+    (Skips an explicit color—using the default ink—and sets mode to stroke.)  
+  - Fully omitted color parameter:  
     ```bash
-    triangle 100 100 150 50 200 100 _
-    ```
+    rect 300 300 150 100
+    ```  
+    (Uses the default ink and fill mode.)
 
-  - Stroked:
-
+- **Draw a Triangle:**  
+  Again, color and mode are optional:
+  - Filled triangle with explicit color:  
+    ```bash
+    triangle 100 100 150 50 200 100 2
+    ```  
+    (Draws a filled triangle using color index 2.)  
+  - Stroked triangle using default ink:  
     ```bash
     triangle 100 100 150 50 200 100 _ S
-    ```
+    ```  
+    (Skips an explicit color so that the default ink is used, and sets mode to stroke.)  
+  - With both parameters omitted:  
+    ```bash
+    triangle 100 100 150 50 200 100
+    ```  
+    (Uses the default ink and fill mode.)
 
 #### Colour and Drawing State
 
-- **Set Default Ink:**
-
+- **Set Default Ink:**  
   ```bash
   ink 3
-  ```
+  ```  
+  (Sets the default ink color to index 3.)
 
-- **Set Default Paper:**
-
+- **Set Default Paper:**  
   ```bash
   paper 7
-  ```
+  ```  
+  (Sets the default paper color to index 7.)
 
-- **Set Brightness:**
-
+- **Set Brightness:**  
   ```bash
   bright 1
-  ```
+  ```  
+  (Enables brightness.)
 
-- **Set All Colour Values:**
-
+- **Set All Colour Values at Once:**  
   ```bash
   colour 0 7 1
-  ```
+  ```  
+  (Sets ink to 0, paper to 7, and brightness on.)
 
 #### Buffer Commands
 
-- **Clear Current Buffer:**
-
+- **Clear Current Buffer:**  
   ```bash
   cls
-  ```
+  ```  
+  (Clears the active buffer; the background will be painted using the effective paper color.)
 
-- **Flip Buffers:**
-
-  Toggle (default between buffers 0 and 1):
-
-  ```bash
-  flip
-  ```
-
-  Or select a specific buffer:
-
-  ```bash
-  flip 3
-  ```
+- **Flip Buffers:**  
+  - Toggle between buffers 0 and 1:  
+    ```bash
+    flip
+    ```  
+  - Or select a specific buffer (e.g., buffer 3):  
+    ```bash
+    flip 3
+    ```
 
 #### Resolution and Scaling
 
-- **Set Graphics Resolution:**
+- **Set Graphics Resolution:**  
+  This command resets all buffers and sets the internal resolution to the base (256×192) multiplied by the given factor.
+  - For default resolution:  
+    ```bash
+    graphics 1
+    ```  
+    (Internal resolution becomes 256×192.)  
+  - For higher resolution:  
+    ```bash
+    graphics 2
+    ```  
+    (Internal resolution becomes 512×384.)
 
-  This command resets all buffers and sets the internal resolution to base (256×192) multiplied by the given factor.
-
-  ```bash
-  graphics 1   # 256 x 192 (default)
-  graphics 2   # 512 x 384
-  ```
-
-- **Set Zoom Factor:**
-
-  Adjusts the display scaling (without clearing buffers):
-
-  ```bash
-  zoom 1   # 1:1 display (default)
-  zoom 2   # Scales internal buffer by a factor of 2 (e.g., 512 x 384 becomes 1024 x 768 on screen)
-  ```
+- **Set Zoom Factor:**  
+  Adjusts the display scaling (without affecting the internal buffer).
+  - For no zoom (1:1 display):  
+    ```bash
+    zoom 1
+    ```  
+  - For zoom factor 2:  
+    ```bash
+    zoom 2
+    ```  
+    (If the internal resolution is, for example, 512×384, the window will scale to 1024×768 on screen.)
 
 #### GUI Event Notifications
 
@@ -261,7 +301,7 @@ mouse: 123,456
 ## Project Structure
 
 - **main.go:**  
-  Contains the full implementation of the VDU/Display Server including:
+  Contains the full implementation of zxvdu including:
   - Command parsing and handling.
   - Drawing primitives rendering.
   - Buffer management.
@@ -271,10 +311,32 @@ mouse: 123,456
 
 ---
 
+## Getting Started on the Command Line
+
+When starting zxvdu, you can configure the following parameters with command‑line flags:
+
+- **-ink**: Default ink (foreground) colour (0–7).  
+- **-paper**: Default paper (background) colour (0–7).  
+- **-bright**: Default brightness flag (0 or 1).  
+- **-graphics**: Internal resolution multiplier (>=1).  
+- **-zoom**: Display zoom factor (>=1).
+
+Example:
+
+```bash
+./zxvdu -ink=3 -paper=0 -bright=1 -graphics=2 -zoom=2
+```
+
+This sets the default ink colour to 3, paper to 0, brightness on, internal resolution to 512×384 (2× multiplier), and a zoom factor of 2 (resulting in a window size of 1024×768).
+
+---
+
 ## Contact
 
 **Name:** haitch  
 **Email:** [haitch@duck.com](mailto:haitch@duck.com)  
 **Social Media:** [https://oldbytes.space/@haitchfive](https://oldbytes.space/@haitchfive)
 
+---
 
+This README now reflects the improved parameter handling, corrected examples, and additional interesting cases. Let me know if you have any further suggestions or adjustments!
