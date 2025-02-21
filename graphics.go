@@ -2,11 +2,10 @@ package main
 
 import (
 	"strings"
-
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
 
-// effectiveInkColor computes the actual ink colour index (taking brightness into account).
+// effectiveInkColor computes the actual ink colour index (taking brightness into account)
 func effectiveInkColor() int {
 	if defaultInk == 0 {
 		return 0
@@ -17,7 +16,7 @@ func effectiveInkColor() int {
 	return defaultInk
 }
 
-// effectivePaperColor computes the paper colour index (taking brightness into account).
+// effectivePaperColor computes the paper colour index (taking brightness into account)
 func effectivePaperColor() int {
 	if defaultPaper == 0 {
 		return 0
@@ -28,60 +27,39 @@ func effectivePaperColor() int {
 	return defaultPaper
 }
 
-// getTargetBuffer returns the correct buffer based on current drawing state
-func getTargetBuffer() rl.RenderTexture2D {
-	if currentTarget == "onscreen" {
-		if currentDrawingMode == "flip" {
-			flipBuffersMu.RLock()
-			defer flipBuffersMu.RUnlock()
-			return flipBuffers[activeFlipBuffer]
-		} else {
-			layerBuffersMu.RLock()
-			defer layerBuffersMu.RUnlock()
-			return layerBuffers[activeLayerBuffer]
-		}
-	} else {
-		if currentDrawingMode == "flip" {
-			flipBuffersMu.RLock()
-			defer flipBuffersMu.RUnlock()
-			return offscreenFlipBuffers[activeOffscreenFlip]
-		} else {
-			layerBuffersMu.RLock()
-			defer layerBuffersMu.RUnlock()
-			return offscreenLayerBuffers[activeOffscreenLayer]
-		}
+// updateActiveBuffer draws a command immediately into the active buffer
+func updateActiveBuffer(bs *BufferSystem, cmd DrawCommand, isLayer bool) (int, error) {
+	flip, layer := bs.GetTargetBuffers()
+	target := flip
+	if isLayer {
+		target = layer
 	}
-}
 
-// updateActiveBuffer draws a command immediately into the active buffer.
-func updateActiveBuffer(cmd DrawCommand) {
-	rt := getTargetBuffer()
-	rl.BeginTextureMode(rt)
+	rl.BeginTextureMode(*target)
 	defer rl.EndTextureMode()
 
-	// In layer mode, if eraser mode is active, drawing commands produce fully transparent pixels.
-	var cOverride rl.Color
-	if currentDrawingMode == "layer" && eraserMode {
-		cOverride = rl.Color{R: 0, G: 0, B: 0, A: 0}
-	}
+	var slot int
+	var err error
 
 	switch cmd.Cmd {
 	case "plot":
-		handlePlot(cmd, cOverride)
+		handlePlot(cmd)
 	case "line":
-		handleLine(cmd, cOverride)
+		handleLine(cmd)
 	case "lineto":
-		handleLineTo(cmd, cOverride)
+		handleLineTo(cmd)
 	case "circle":
-		handleCircle(cmd, cOverride)
+		handleCircle(cmd)
 	case "rect":
-		handleRect(cmd, cOverride)
+		slot, err = handleRect(cmd, target)
 	case "triangle":
-		handleTriangle(cmd, cOverride)
+		handleTriangle(cmd)
 	}
+
+	return slot, err
 }
 
-func handlePlot(cmd DrawCommand, cOverride rl.Color) {
+func handlePlot(cmd DrawCommand) {
 	if len(cmd.Params) >= 2 {
 		cIndex := -1
 		if len(cmd.Params) >= 3 {
@@ -89,18 +67,14 @@ func handlePlot(cmd DrawCommand, cOverride rl.Color) {
 		}
 		if cIndex == -1 {
 			cIndex = effectiveInkColor()
+		} else if cIndex >= len(palette) {
+			cIndex = len(palette) - 1
 		}
-		var col rl.Color
-		if currentDrawingMode == "layer" && eraserMode {
-			col = cOverride
-		} else {
-			col = palette[cIndex]
-		}
-		rl.DrawPixel(int32(cmd.Params[0]), int32(cmd.Params[1]), col)
+		rl.DrawPixel(int32(cmd.Params[0]), int32(cmd.Params[1]), palette[cIndex])
 	}
 }
 
-func handleLine(cmd DrawCommand, cOverride rl.Color) {
+func handleLine(cmd DrawCommand) {
 	if len(cmd.Params) >= 4 {
 		cIndex := -1
 		if len(cmd.Params) >= 5 {
@@ -108,19 +82,18 @@ func handleLine(cmd DrawCommand, cOverride rl.Color) {
 		}
 		if cIndex == -1 {
 			cIndex = effectiveInkColor()
+		} else if cIndex >= len(palette) {
+			cIndex = len(palette) - 1
 		}
-		var col rl.Color
-		if currentDrawingMode == "layer" && eraserMode {
-			col = cOverride
-		} else {
-			col = palette[cIndex]
-		}
-		rl.DrawLine(int32(cmd.Params[0]), int32(cmd.Params[1]),
-			int32(cmd.Params[2]), int32(cmd.Params[3]), col)
+		rl.DrawLine(
+			int32(cmd.Params[0]), int32(cmd.Params[1]),
+			int32(cmd.Params[2]), int32(cmd.Params[3]),
+			palette[cIndex],
+		)
 	}
 }
 
-func handleLineTo(cmd DrawCommand, cOverride rl.Color) {
+func handleLineTo(cmd DrawCommand) {
 	if len(cmd.Params) >= 2 {
 		cIndex := -1
 		if len(cmd.Params) >= 3 {
@@ -128,20 +101,19 @@ func handleLineTo(cmd DrawCommand, cOverride rl.Color) {
 		}
 		if cIndex == -1 {
 			cIndex = effectiveInkColor()
+		} else if cIndex >= len(palette) {
+			cIndex = len(palette) - 1
 		}
-		var col rl.Color
-		if currentDrawingMode == "layer" && eraserMode {
-			col = cOverride
-		} else {
-			col = palette[cIndex]
-		}
-		rl.DrawLine(int32(currentX), int32(currentY),
-			int32(cmd.Params[0]), int32(cmd.Params[1]), col)
+		rl.DrawLine(
+			int32(currentX), int32(currentY),
+			int32(cmd.Params[0]), int32(cmd.Params[1]),
+			palette[cIndex],
+		)
 		currentX, currentY = cmd.Params[0], cmd.Params[1]
 	}
 }
 
-func handleCircle(cmd DrawCommand, cOverride rl.Color) {
+func handleCircle(cmd DrawCommand) {
 	if len(cmd.Params) >= 3 {
 		cIndex := -1
 		if len(cmd.Params) >= 4 {
@@ -149,47 +121,69 @@ func handleCircle(cmd DrawCommand, cOverride rl.Color) {
 		}
 		if cIndex == -1 {
 			cIndex = effectiveInkColor()
+		} else if cIndex >= len(palette) {
+			cIndex = len(palette) - 1
 		}
-		var col rl.Color
-		if currentDrawingMode == "layer" && eraserMode {
-			col = cOverride
+		if strings.EqualFold(cmd.Mode, "S") {
+			rl.DrawCircleLines(
+				int32(cmd.Params[0]), int32(cmd.Params[1]),
+				float32(cmd.Params[2]),
+				palette[cIndex],
+			)
 		} else {
-			col = palette[cIndex]
-		}
-		if strings.ToUpper(cmd.Mode) == "S" {
-			rl.DrawCircleLines(int32(cmd.Params[0]), int32(cmd.Params[1]), float32(cmd.Params[2]), col)
-		} else {
-			rl.DrawCircle(int32(cmd.Params[0]), int32(cmd.Params[1]), float32(cmd.Params[2]), col)
+			rl.DrawCircle(
+				int32(cmd.Params[0]), int32(cmd.Params[1]),
+				float32(cmd.Params[2]),
+				palette[cIndex],
+			)
 		}
 	}
 }
 
-func handleRect(cmd DrawCommand, cOverride rl.Color) {
-	if len(cmd.Params) >= 4 {
-		cIndex := -1
-		if len(cmd.Params) >= 5 {
-			cIndex = cmd.Params[4]
-		}
-		if cIndex == -1 {
-			cIndex = effectiveInkColor()
-		}
-		var col rl.Color
-		if currentDrawingMode == "layer" && eraserMode {
-			col = cOverride
-		} else {
-			col = palette[cIndex]
-		}
-		if strings.ToUpper(cmd.Mode) == "S" {
-			rl.DrawRectangleLines(int32(cmd.Params[0]), int32(cmd.Params[1]),
-				int32(cmd.Params[2]), int32(cmd.Params[3]), col)
-		} else {
-			rl.DrawRectangle(int32(cmd.Params[0]), int32(cmd.Params[1]),
-				int32(cmd.Params[2]), int32(cmd.Params[3]), col)
-		}
+func handleRect(cmd DrawCommand, target *rl.RenderTexture2D) (int, error) {
+	if len(cmd.Params) < 4 {
+		return -1, nil
 	}
+
+	// Handle texture capture mode
+	if strings.EqualFold(cmd.Mode, "T") {
+		region := CaptureRegion{
+			X:      cmd.Params[0],
+			Y:      cmd.Params[1],
+			Width:  cmd.Params[2],
+			Height: cmd.Params[3],
+		}
+		return CreateTextureFromBuffer(target, region)
+	}
+
+	// Normal rectangle drawing
+	cIndex := -1
+	if len(cmd.Params) >= 5 {
+		cIndex = cmd.Params[4]
+	}
+	if cIndex == -1 {
+		cIndex = effectiveInkColor()
+	} else if cIndex >= len(palette) {
+		cIndex = len(palette) - 1
+	}
+
+	if strings.EqualFold(cmd.Mode, "S") {
+		rl.DrawRectangleLines(
+			int32(cmd.Params[0]), int32(cmd.Params[1]),
+			int32(cmd.Params[2]), int32(cmd.Params[3]),
+			palette[cIndex],
+		)
+	} else {
+		rl.DrawRectangle(
+			int32(cmd.Params[0]), int32(cmd.Params[1]),
+			int32(cmd.Params[2]), int32(cmd.Params[3]),
+			palette[cIndex],
+		)
+	}
+	return -1, nil
 }
 
-func handleTriangle(cmd DrawCommand, cOverride rl.Color) {
+func handleTriangle(cmd DrawCommand) {
 	if len(cmd.Params) >= 6 {
 		cIndex := -1
 		if len(cmd.Params) >= 7 {
@@ -197,22 +191,19 @@ func handleTriangle(cmd DrawCommand, cOverride rl.Color) {
 		}
 		if cIndex == -1 {
 			cIndex = effectiveInkColor()
-		}
-		var col rl.Color
-		if currentDrawingMode == "layer" && eraserMode {
-			col = cOverride
-		} else {
-			col = palette[cIndex]
+		} else if cIndex >= len(palette) {
+			cIndex = len(palette) - 1
 		}
 		p1 := rl.Vector2{X: float32(cmd.Params[0]), Y: float32(cmd.Params[1])}
 		p2 := rl.Vector2{X: float32(cmd.Params[2]), Y: float32(cmd.Params[3])}
 		p3 := rl.Vector2{X: float32(cmd.Params[4]), Y: float32(cmd.Params[5])}
-		if strings.ToUpper(cmd.Mode) == "S" {
-			rl.DrawLineV(p1, p2, col)
-			rl.DrawLineV(p2, p3, col)
-			rl.DrawLineV(p3, p1, col)
+		
+		if strings.EqualFold(cmd.Mode, "S") {
+			rl.DrawLineV(p1, p2, palette[cIndex])
+			rl.DrawLineV(p2, p3, palette[cIndex])
+			rl.DrawLineV(p3, p1, palette[cIndex])
 		} else {
-			rl.DrawTriangle(p1, p2, p3, col)
+			rl.DrawTriangle(p1, p2, p3, palette[cIndex])
 		}
 	}
 }

@@ -6,11 +6,19 @@ import (
 	"strings"
 )
 
-// parseCommand converts a text line into a DrawCommand.
+// DrawCommand represents a drawing or control instruction
+type DrawCommand struct {
+	Cmd    string   // Command name
+	Params []int    // Numeric parameters
+	Mode   string   // Mode flags ("S"/"F"/"T" for shapes, "flip"/"layer" for paint)
+	Str    string   // String data (used for texture data)
+}
+
+// parseCommand converts a text line into a DrawCommand
 func parseCommand(line string) (DrawCommand, error) {
 	fields := strings.Fields(line)
 	if len(fields) == 0 {
-		return DrawCommand{}, fmt.Errorf("ERROR 0001 : empty command")
+		return DrawCommand{}, fmt.Errorf("empty command")
 	}
 	cmd := strings.ToLower(fields[0])
 	var dc DrawCommand
@@ -23,206 +31,124 @@ func parseCommand(line string) (DrawCommand, error) {
 		return parseQueryCommand(fields)
 	}
 
-	// Special branch for texture commands
+	// Handle texture commands
 	if cmd == "tex" {
-		return parseTexCommand(fields)
+		return parseTextureCommand(fields)
 	}
 
-	// Special branch for paint commands
-	if cmd == "paint" || cmd == "paint_target" || cmd == "paint_copy" {
+	// Handle painting mode selection
+	if cmd == "paint" {
 		return parsePaintCommand(fields)
-	}
-
-	// Special handling for "eraser"
-	if cmd == "eraser" {
-		return parseEraserCommand(fields)
 	}
 
 	// Handle regular commands
 	return parseRegularCommand(cmd, fields)
 }
 
+func parseTextureCommand(fields []string) (DrawCommand, error) {
+	if len(fields) < 2 {
+		return DrawCommand{}, fmt.Errorf("invalid texture command")
+	}
+
+	dc := DrawCommand{
+		Cmd:  "tex",
+		Mode: strings.ToLower(fields[1]), // add/set/del/paint
+	}
+
+	switch dc.Mode {
+	case "add", "set":
+		// tex add|set pixeldata width height
+		// tex set n pixeldata width height
+		if len(fields) < 4 {
+			return dc, fmt.Errorf("insufficient parameters for tex %s", dc.Mode)
+		}
+		startIdx := 2
+		if dc.Mode == "set" {
+			if len(fields) < 5 {
+				return dc, fmt.Errorf("insufficient parameters for tex set")
+			}
+			n, err := strconv.Atoi(fields[2])
+			if err != nil {
+				return dc, fmt.Errorf("invalid texture number")
+			}
+			dc.Params = append(dc.Params, n)
+			startIdx = 3
+		}
+		dc.Str = fields[startIdx] // pixel data
+		width, err := strconv.Atoi(fields[startIdx+1])
+		if err != nil {
+			return dc, fmt.Errorf("invalid width")
+		}
+		height, err := strconv.Atoi(fields[startIdx+2])
+		if err != nil {
+			return dc, fmt.Errorf("invalid height")
+		}
+		dc.Params = append(dc.Params, width, height)
+
+	case "del":
+		// tex del n
+		if len(fields) < 3 {
+			return dc, fmt.Errorf("texture number required")
+		}
+		n, err := strconv.Atoi(fields[2])
+		if err != nil {
+			return dc, fmt.Errorf("invalid texture number")
+		}
+		dc.Params = append(dc.Params, n)
+
+	case "paint":
+		// tex paint x y n
+		if len(fields) < 5 {
+			return dc, fmt.Errorf("insufficient parameters for tex paint")
+		}
+		x, err := strconv.Atoi(fields[2])
+		if err != nil {
+			return dc, fmt.Errorf("invalid x coordinate")
+		}
+		y, err := strconv.Atoi(fields[3])
+		if err != nil {
+			return dc, fmt.Errorf("invalid y coordinate")
+		}
+		n, err := strconv.Atoi(fields[4])
+		if err != nil {
+			return dc, fmt.Errorf("invalid texture number")
+		}
+		dc.Params = append(dc.Params, x, y, n)
+
+	default:
+		return dc, fmt.Errorf("unknown texture command mode: %s", dc.Mode)
+	}
+
+	return dc, nil
+}
+
+func parsePaintCommand(fields []string) (DrawCommand, error) {
+	if len(fields) == 2 {
+		if strings.ToLower(fields[1]) == "flip" {
+			return DrawCommand{Cmd: "paint", Mode: "flip"}, nil
+		}
+		if strings.ToLower(fields[1]) == "layer" {
+			return DrawCommand{Cmd: "paint", Mode: "layer"}, nil
+		}
+		// If not flip/layer, treat as buffer number
+		n, err := strconv.Atoi(fields[1])
+		if err != nil {
+			return DrawCommand{}, fmt.Errorf("paint parameter must be number, flip, or layer")
+		}
+		return DrawCommand{Cmd: "paint", Params: []int{n}}, nil
+	}
+	return DrawCommand{Cmd: "paint", Params: []int{0}}, nil // Default to buffer 0
+}
+
 func parseQueryCommand(fields []string) (DrawCommand, error) {
 	if len(fields) == 0 {
-		return DrawCommand{}, fmt.Errorf("ERROR 0001 : empty query command")
+		return DrawCommand{}, fmt.Errorf("empty query command")
 	}
 	
 	return DrawCommand{
 		Cmd: fields[0],
 		Mode: "query",
 	}, nil
-}
-
-func parsePaintCommand(fields []string) (DrawCommand, error) {
-	if len(fields) < 2 {
-		return DrawCommand{}, fmt.Errorf("ERROR 0006 : paint command requires parameters")
-	}
-
-	cmd := strings.ToLower(fields[0])
-	switch cmd {
-	case "paint":
-		modeParam := strings.ToLower(fields[1])
-		if modeParam != "flip" && modeParam != "layer" {
-			return DrawCommand{}, fmt.Errorf("ERROR 0006 : paint parameter must be flip or layer")
-		}
-		return DrawCommand{
-			Cmd:  "paint",
-			Mode: modeParam,
-		}, nil
-
-	case "paint_target":
-		targetParam := strings.ToLower(fields[1])
-		if targetParam != "onscreen" && targetParam != "offscreen" {
-			return DrawCommand{}, fmt.Errorf("ERROR 0006 : paint_target parameter must be onscreen or offscreen")
-		}
-		return DrawCommand{
-			Cmd:  "paint_target",
-			Mode: targetParam,
-		}, nil
-
-	case "paint_copy":
-		if len(fields) != 4 {
-			return DrawCommand{}, fmt.Errorf("ERROR 0006 : paint_copy requires buffer_type src dst")
-		}
-		bufferType := strings.ToLower(fields[1])
-		if bufferType != "flip" && bufferType != "layer" {
-			return DrawCommand{}, fmt.Errorf("ERROR 0006 : paint_copy buffer_type must be flip or layer")
-		}
-		src, err1 := strconv.Atoi(fields[2])
-		dst, err2 := strconv.Atoi(fields[3])
-		if err1 != nil || err2 != nil {
-			return DrawCommand{}, fmt.Errorf("ERROR 0006 : invalid buffer numbers")
-		}
-		return DrawCommand{
-			Cmd:    "paint_copy",
-			Mode:   bufferType,
-			Params: []int{src, dst},
-		}, nil
-	}
-
-	return DrawCommand{}, fmt.Errorf("ERROR 0006 : invalid paint command")
-}
-
-func parseTexCommand(fields []string) (DrawCommand, error) {
-	if len(fields) < 2 {
-		return DrawCommand{}, fmt.Errorf("ERROR 0010 : tex command requires a subcommand")
-	}
-	
-	subCmd := strings.ToLower(fields[1])
-	var dc DrawCommand
-	dc.Cmd = "tex"
-	
-	switch subCmd {
-	case "add":
-		return parseTexAdd(fields)
-	case "set":
-		return parseTexSet(fields)
-	case "del":
-		return parseTexDelete(fields)
-	case "paint":
-		return parseTexPaint(fields)
-	default:
-		return DrawCommand{}, fmt.Errorf("ERROR 0020 : unknown tex sub-command %q", subCmd)
-	}
-}
-
-func parseTexAdd(fields []string) (DrawCommand, error) {
-	if len(fields) < 3 {
-		return DrawCommand{}, fmt.Errorf("ERROR 0011 : tex add requires pixel data")
-	}
-	
-	dc := DrawCommand{
-		Cmd:  "tex",
-		Mode: "add",
-		Str:  fields[2],
-	}
-	
-	if len(fields) >= 5 {
-		sx, err1 := strconv.Atoi(fields[3])
-		sy, err2 := strconv.Atoi(fields[4])
-		if err1 != nil || err2 != nil {
-			return DrawCommand{}, fmt.Errorf("ERROR 0012 : invalid size parameters")
-		}
-		dc.Params = []int{sx, sy}
-	} else {
-		dc.Params = []int{16, 16} // Default size
-	}
-	
-	return dc, nil
-}
-
-func parseTexSet(fields []string) (DrawCommand, error) {
-	if len(fields) < 4 {
-		return DrawCommand{}, fmt.Errorf("ERROR 0013 : tex set requires texture number and pixel data")
-	}
-	
-	num, err := strconv.Atoi(fields[2])
-	if err != nil {
-		return DrawCommand{}, fmt.Errorf("ERROR 0014 : invalid texture number")
-	}
-	
-	dc := DrawCommand{
-		Cmd:    "tex",
-		Mode:   "set",
-		Params: []int{num},
-		Str:    fields[3],
-	}
-	
-	if len(fields) >= 6 {
-		sx, err1 := strconv.Atoi(fields[4])
-		sy, err2 := strconv.Atoi(fields[5])
-		if err1 != nil || err2 != nil {
-			return DrawCommand{}, fmt.Errorf("ERROR 0015 : invalid size parameters")
-		}
-		dc.Params = append(dc.Params, sx, sy)
-	} else {
-		dc.Params = append(dc.Params, 16, 16) // Default size
-	}
-	
-	return dc, nil
-}
-
-func parseTexDelete(fields []string) (DrawCommand, error) {
-	if len(fields) < 3 {
-		return DrawCommand{}, fmt.Errorf("ERROR 0016 : tex del requires texture number")
-	}
-	
-	num, err := strconv.Atoi(fields[2])
-	if err != nil {
-		return DrawCommand{}, fmt.Errorf("ERROR 0017 : invalid texture number")
-	}
-	
-	return DrawCommand{
-		Cmd:    "tex",
-		Mode:   "del",
-		Params: []int{num},
-	}, nil
-}
-
-func parseTexPaint(fields []string) (DrawCommand, error) {
-	if len(fields) < 5 {
-		return DrawCommand{}, fmt.Errorf("ERROR 0021 : tex paint requires x, y, and texture number")
-	}
-	
-	x, err1 := strconv.Atoi(fields[2])
-	y, err2 := strconv.Atoi(fields[3])
-	texNum, err3 := strconv.Atoi(fields[4])
-	if err1 != nil || err2 != nil || err3 != nil {
-		return DrawCommand{}, fmt.Errorf("ERROR 0022 : invalid parameters for tex paint")
-	}
-	
-	return DrawCommand{
-		Cmd:    "tex",
-		Mode:   "paint",
-		Params: []int{x, y, texNum},
-	}, nil
-}
-
-func parseEraserCommand(fields []string) (DrawCommand, error) {
-	if len(fields) != 1 {
-		return DrawCommand{}, fmt.Errorf("ERROR 0007 : eraser command takes no parameters")
-	}
-	return DrawCommand{Cmd: "eraser"}, nil
 }
 
 func parseRegularCommand(cmd string, fields []string) (DrawCommand, error) {
@@ -234,12 +160,12 @@ func parseRegularCommand(cmd string, fields []string) (DrawCommand, error) {
 	}
 
 	switch cmd {
-	case "plot", "line", "lineto", "ink", "paper", "bright", "colour", "cls", "flip", "layer", "graphics", "zoom":
+	case "plot", "line", "lineto", "ink", "paper", "bright", "colour", "cls", "flip", "layer":
 		params := []int{}
 		for _, token := range fields[1:] {
 			val, err := convertToken(token)
 			if err != nil {
-				return DrawCommand{}, fmt.Errorf("ERROR 0002 : invalid parameter %q", token)
+				return DrawCommand{}, fmt.Errorf("invalid parameter %q", token)
 			}
 			params = append(params, val)
 		}
@@ -249,7 +175,7 @@ func parseRegularCommand(cmd string, fields []string) (DrawCommand, error) {
 		return parseShapeCommand(cmd, fields)
 
 	default:
-		return DrawCommand{}, fmt.Errorf("ERROR 0005 : unknown command %q", cmd)
+		return DrawCommand{}, fmt.Errorf("unknown command %q", cmd)
 	}
 }
 
@@ -259,13 +185,12 @@ func parseShapeCommand(cmd string, fields []string) (DrawCommand, error) {
 	mode := "F"
 
 	if tokenCount > 0 {
-		if _, err := strconv.Atoi(fields[len(fields)-1]); err != nil {
-			modeCandidate := strings.ToUpper(fields[len(fields)-1])
-			if modeCandidate != "S" && modeCandidate != "F" {
-				return DrawCommand{}, fmt.Errorf("ERROR 0003 : %s mode must be S or F", cmd)
-			}
-			mode = modeCandidate
+		lastToken := strings.ToUpper(fields[len(fields)-1])
+		if lastToken == "S" || lastToken == "F" || lastToken == "T" {
+			mode = lastToken
 			tokenCount--
+		} else if _, err := strconv.Atoi(fields[len(fields)-1]); err != nil {
+			return DrawCommand{}, fmt.Errorf("%s mode must be S, F, or T", cmd)
 		}
 	}
 
@@ -273,7 +198,7 @@ func parseShapeCommand(cmd string, fields []string) (DrawCommand, error) {
 	for i := 1; i <= tokenCount; i++ {
 		val, err := strconv.Atoi(fields[i])
 		if err != nil {
-			return DrawCommand{}, fmt.Errorf("ERROR 0002 : invalid parameter %q", fields[i])
+			return DrawCommand{}, fmt.Errorf("invalid parameter %q", fields[i])
 		}
 		params = append(params, val)
 	}
@@ -284,19 +209,19 @@ func parseShapeCommand(cmd string, fields []string) (DrawCommand, error) {
 		if len(params) == 4 {
 			params = append(params, -1)
 		} else if len(params) != 5 {
-			return DrawCommand{}, fmt.Errorf("ERROR 0004 : rect requires 4 or 5 numeric parameters, plus optional mode")
+			return DrawCommand{}, fmt.Errorf("rect requires 4 or 5 numeric parameters, plus optional mode")
 		}
 	case "circle":
 		if len(params) == 3 {
 			params = append(params, -1)
 		} else if len(params) != 4 {
-			return DrawCommand{}, fmt.Errorf("ERROR 0004 : circle requires 3 or 4 numeric parameters, plus optional mode")
+			return DrawCommand{}, fmt.Errorf("circle requires 3 or 4 numeric parameters, plus optional mode")
 		}
 	case "triangle":
 		if len(params) == 6 {
 			params = append(params, -1)
 		} else if len(params) != 7 {
-			return DrawCommand{}, fmt.Errorf("ERROR 0004 : triangle requires 6 or 7 numeric parameters, plus optional mode")
+			return DrawCommand{}, fmt.Errorf("triangle requires 6 or 7 numeric parameters, plus optional mode")
 		}
 	}
 
@@ -305,4 +230,31 @@ func parseShapeCommand(cmd string, fields []string) (DrawCommand, error) {
 		Params: params,
 		Mode:   mode,
 	}, nil
+}
+
+// processQuery handles query commands
+func processQuery(cmd string) string {
+	switch cmd {
+	case "colour":
+		return fmt.Sprintf("%d %d %d", defaultInk, defaultPaper, boolToInt(defaultBright))
+	case "ink":
+		return fmt.Sprintf("%d", defaultInk)
+	case "paper":
+		return fmt.Sprintf("%d", defaultPaper)
+	case "bright":
+		return fmt.Sprintf("%d", boolToInt(defaultBright))
+	case "paint":
+		return currentDrawingMode
+	case "host":
+		return "zxvdu v1.0"
+	default:
+		return "unknown query"
+	}
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
