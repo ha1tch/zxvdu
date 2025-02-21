@@ -100,22 +100,30 @@ func main() {
 		rl.BeginDrawing()
 		rl.ClearBackground(rl.Black)
 
+		// Get the visible buffers (always buffer 0)
+		flip, layer := buffers.GetDisplayBuffers()
+
+		// Source rectangle for buffer content
+		srcRect := rl.Rectangle{
+			X: 0,
+			Y: 0,
+			Width: float32(internalW),
+			Height: -float32(internalH), // Flip vertically
+		}
+
+		// Destination rectangle for scaled display
+		dstRect := rl.Rectangle{
+			X: 0,
+			Y: 0,
+			Width: float32(windowW),
+			Height: float32(windowH),
+		}
+
 		// Draw flip buffer 0 (visible background)
-		flip, layer := buffers.GetTargetBuffers()
 		rl.DrawTexturePro(
 			(*flip).Texture,
-			rl.Rectangle{
-				X: 0,
-				Y: 0,
-				Width: float32(internalW),
-				Height: -float32(internalH),
-			},
-			rl.Rectangle{
-				X: 0,
-				Y: 0,
-				Width: float32(windowW),
-				Height: float32(windowH),
-			},
+			srcRect,
+			dstRect,
 			rl.Vector2{},
 			0,
 			rl.White,
@@ -124,18 +132,8 @@ func main() {
 		// Draw layer buffer 0 (visible overlay)
 		rl.DrawTexturePro(
 			(*layer).Texture,
-			rl.Rectangle{
-				X: 0,
-				Y: 0,
-				Width: float32(internalW),
-				Height: -float32(internalH),
-			},
-			rl.Rectangle{
-				X: 0,
-				Y: 0,
-				Width: float32(windowW),
-				Height: float32(windowH),
-			},
+			srcRect,
+			dstRect,
 			rl.Vector2{},
 			0,
 			rl.White,

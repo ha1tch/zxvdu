@@ -66,12 +66,26 @@ func NewBufferSystem(numBuffers int, width, height int32) *BufferSystem {
 	return bs
 }
 
+// GetDisplayBuffers returns buffer 0 of each type (always visible)
+func (bs *BufferSystem) GetDisplayBuffers() (*rl.RenderTexture2D, *rl.RenderTexture2D) {
+	bs.mu.RLock()
+	defer bs.mu.RUnlock()
+	return bs.flipBuffers[0], bs.layerBuffers[0]
+}
+
+// GetTargetBuffers returns the current flip and layer buffers for drawing
+func (bs *BufferSystem) GetTargetBuffers() (*rl.RenderTexture2D, *rl.RenderTexture2D) {
+	bs.mu.RLock()
+	defer bs.mu.RUnlock()
+	return bs.flipBuffers[bs.activeTarget], bs.layerBuffers[bs.activeTarget]
+}
+
 // SwapFlip swaps flip buffer n with buffer 0
 func (bs *BufferSystem) SwapFlip(n int) error {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
 
-	if n <= 0 || n >= len(bs.flipBuffers) {
+	if n < 1 || n >= len(bs.flipBuffers) {
 		return fmt.Errorf("invalid buffer index")
 	}
 
@@ -84,7 +98,7 @@ func (bs *BufferSystem) SwapLayer(n int) error {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
 
-	if n <= 0 || n >= len(bs.layerBuffers) {
+	if n < 1 || n >= len(bs.layerBuffers) {
 		return fmt.Errorf("invalid buffer index")
 	}
 
@@ -103,13 +117,6 @@ func (bs *BufferSystem) SetActiveTarget(n int) error {
 
 	bs.activeTarget = n
 	return nil
-}
-
-// GetTargetBuffers returns the current flip and layer buffers for drawing
-func (bs *BufferSystem) GetTargetBuffers() (*rl.RenderTexture2D, *rl.RenderTexture2D) {
-	bs.mu.RLock()
-	defer bs.mu.RUnlock()
-	return bs.flipBuffers[bs.activeTarget], bs.layerBuffers[bs.activeTarget]
 }
 
 // ClearFlip clears the active flip buffer to paper color
