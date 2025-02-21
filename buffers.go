@@ -152,16 +152,32 @@ func createTextureFromPixelData(pixelData string, width, height int) (rl.Texture
 	// Create an image data slice.
 	imgData := make([]rl.Color, width*height)
 	for i, ch := range pixelData {
-		// Validate hex character.
-		val, err := strconv.ParseInt(string(ch), 16, 64)
-		if err != nil {
-			return rl.Texture2D{}, fmt.Errorf("invalid hex digit %q", ch)
+		var idx int
+		switch ch {
+		case '.':
+			// Transparent pixel
+			imgData[i] = rl.Color{R: 0, G: 0, B: 0, A: 0}
+			continue
+		case '@':
+			// Light grey (palette index 7)
+			idx = 7
+		case '%':
+			// White (palette index 15)
+			idx = 15
+		case '`':
+			// Black (palette index 0)
+			idx = 0
+		default:
+			// Try to parse as hex
+			val, err := strconv.ParseInt(string(ch), 16, 64)
+			if err != nil {
+				return rl.Texture2D{}, fmt.Errorf("invalid character %q - must be hex digit or one of: . @ % `", ch)
+			}
+			if val < 0 || val > 15 {
+				return rl.Texture2D{}, fmt.Errorf("hex value %d out of range", val)
+			}
+			idx = int(val)
 		}
-		// Check if within palette bounds (0-14).
-		if val < 0 || val > 15 {
-			return rl.Texture2D{}, fmt.Errorf("hex value %d out of range", val)
-		}
-		idx := int(val)
 		if idx >= len(palette) {
 			idx = len(palette) - 1
 		}
